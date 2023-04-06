@@ -1,0 +1,73 @@
+#!/bin/ksh
+
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+LOGGING='/var/log/salt/run.log'
+
+## helper functions
+_timestamp() {
+    date "+%Y-%m-%d %H:%M:%S:"
+}
+
+_log() {
+    echo "$1" | sed "s/^/$(_timestamp) /" | tee -a "${LOGGING}"
+}
+
+# Both echo and log
+_display() {
+    echo "$1"
+    _log "$1"
+}
+
+_error() {
+    msg="ERROR: $1"
+    echo "$msg" 1>&2
+    echo "$(_timestamp) " | tee -a "${LOGGING}"
+    echo "One or more errors found. See  for details." 1>&2
+    exit 1
+}
+
+_warning() {
+    msg="WARNING: $1"
+    echo "$msg" 1>&2
+    echo "$(_timestamp) $msg" | tee -a "${LOGGING}"
+}
+
+
+start_salt_minion() {
+    _log "starting salt-minion"
+    /etc/rc.d/init.d/salt-minion start
+}
+
+stop_salt_minion() {
+    _log "stopping salt-minion"
+    /etc/rc.d/init.d/salt-minion stop
+    exit
+}
+
+stop_force_salt_minion() {
+    _log "stopping forcefully salt-minion"
+    /etc/rc.d/init.d/salt-minion stop
+    exit
+}
+
+restart_salt_minion() {
+    _log "restarting salt-minion"
+    /etc/rc.d/init.d/salt-minion restart
+    exit
+}
+
+## defaults
+trap 'stop_salt_minion' TERM
+trap 'stop_force_salt_minion' QUIT
+trap 'restart_salt_minion' HUP
+
+_log "beginning salt-minion"
+start_salt_minion
+
+while true; do
+   sleep 10
+done
+_log "finished initscript"
+exit 0

@@ -1,0 +1,16 @@
+#!/usr/bin/bash
+
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+## AIX doesn't resolve //path, so have hoops to jump through
+## e.g. cd //path does not get reduced to /path
+##
+## return the home directory prefix to use
+
+if [[ ${HOME} = '/' ]]; then
+    export HOMEDIR_PREFIX=''
+else
+    export HOMEDIR_PREFIX="${HOME}"
+fi
+echo "${HOMEDIR_PREFIX}"

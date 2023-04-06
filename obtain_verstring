@@ -1,0 +1,48 @@
+#!/bin/bash
+
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+## keep version 4 digits
+## SALT_VERSION="19.2.6.1"
+## SALT_VERSION="30.0.0.1"
+## SALT_VERSION="30.0.0.4"
+## SALT_VERSION="30.0.1.1"
+## SALT_VERSION="30.0.2.0"
+## SALT_VERSION="p1.p2.p3.p4"
+# if githun version add pre-ceding 2
+# hence 3002-7-g570ed6ae42 becomes 23.0.0.2
+
+if [[ $# -ne 0 ]]; then
+    version_input="$1"
+else
+    version_input='2123.4'
+fi
+
+p1=''
+p2=''
+p3=''
+p4=''
+
+if [[ -n ${version_input} ]]; then
+    ## len=$(expr length "$version_input")
+    len=${#version_input}
+    if [[ ${len} -eq 4 ]]; then
+        p1=${version_input:0:2}
+        p2=${version_input:2:1}
+        p3=${version_input:3:1}
+        p4='0'
+    elif [[ ${len} -eq 6 ]]; then
+        p1=${version_input:0:2}
+        p2=${version_input:2:1}
+        p3=${version_input:3:1}
+        p4=${version_input:5:1}
+    else
+        p1="2${version_input:0:1}"
+        p2=${version_input:1:1}
+        p3=${version_input:2:1}
+        p4=${version_input:3:1}
+    fi
+fi
+version_string="${p1}.${p2}.${p3}.${p4}"
+echo "${version_string}"

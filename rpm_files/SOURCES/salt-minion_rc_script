@@ -1,0 +1,50 @@
+#!/bin/sh
+
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+PREFIX="/opt/saltstack/salt/run/run"
+PARAM="minion"
+
+RETVAL=0
+
+start_daemon() {
+    echo "Starting salt-minion daemon..."
+    if ps -ef | fgrep ${PREFIX} | grep ${PARAM} | grep -v grep >/dev/null; then
+        echo OK
+    else
+        ${PREFIX} ${PARAM} -d >/dev/null
+        if expr $? = 0 >/dev/null; then
+            echo OK
+        else
+            echo FAILED
+            exit 1
+        fi
+    fi
+}
+
+stop_daemon() {
+    echo "Stopping salt-minion daemon..."
+    if ps -ef | fgrep ${PREFIX} | grep ${PARAM} | grep -v grep | awk '{print $2}' | xargs kill >/dev/null; then
+        echo OK
+    else
+        echo FAILED
+        exit 1
+    fi
+}
+
+restart_daemon() {
+   stop_daemon
+   start_daemon
+}
+
+case "$1" in
+    start|stop|restart)
+        ${1}_daemon
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac
+exit 0

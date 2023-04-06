@@ -1,0 +1,303 @@
+#!/usr/bin/bash
+
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+export oldpwd=""
+oldpwd=$(pwd)
+export CICD_SALT_DIST_VERSION="3005.1"
+export CICD_SALT_VERSION=${CICD_SALT_DIST_VERSION}
+export CICD_SALT_RELEASE="1"
+export CICD_SALT_DATE="Thu Jan 1 1970"
+export CICD_SALT_LOCATION="salt"
+export CICD_SALT_VERSION=""
+export GEN_IBM_VER_STRING=""
+export AIX_VERSION=""
+export AIX_RELEASE=""
+
+GEN_IBM_VER_STRING=$(./obtain_verstring "${CICD_SALT_VERSION}")
+AIX_VERSION=$(uname -v)
+AIX_RELEASE=$(uname -r)
+
+export PYINSTALLER_VER="5.5"
+export TAGGED_BUILD="tagged"
+
+export freeware="/opt/freeware"
+export PATH="${freeware}/bin:${PATH}"
+
+chfs -a size=9G /usr
+chfs -a size=5G /
+chfs -a size=15G /home
+chfs -a size=4G /var
+chfs -a size=3G /tmp
+chfs -a size=8G /opt
+
+## AIX doesn't resolve //path, so have hoops to jump through
+## e.g. cd //path does not get reduced to /path
+if [[ -z ${HOME} ]]; then
+    export HOME='/'
+    export HOMEDIR_PREFIX=''
+elif [[ ${HOME} = '/' ]]; then
+    export HOMEDIR_PREFIX=''
+else
+    export HOMEDIR_PREFIX="${HOME}"
+fi
+rm -f ${HOMEDIR_PREFIX}/.rpmmacros
+
+yum -y install binutils
+yum -y install libffi libffi-devel
+yum -y install zlib-devel
+yum -y install jq
+yum -y install zeromq zeromq-devel
+yum -y install coreutils
+yum -y install bash-completion
+yum -y install python3.9 python3.9-devel python3.9-test
+
+# python3-tools
+python3.9 -m pip install wheel
+python3.9 -m pip install cffi==1.13.2
+python3.9 -m pip install cheroot==8.2.1
+## python3.9 -m pip install cryptography==3.4.7
+python3.9 -m pip install cryptography==3.1.1
+## python3.9 -m pip install docs==3.7.12
+python3.9 -m pip install mock==3.0.5
+python3.9 -m pip install pytest==5.3.1
+python3.9 -m pip install pyzmq==18.1.1
+python3.9 -m pip install sphinx==2.3.0
+python3.9 -m pip install traceback2==1.4.0
+
+
+# allow for use on AIX 7.1 TL5 or AIX 7.2 TL4 (current build offering)
+export AIX_VFLAG="-D_AIX71"
+export AIX_TL_LEVEL=""
+AIX_TL_LEVEL=$(oslevel -r | head -n 1 | cut -d '-' -f 2 | sed s/0//)
+if [[ "2" = "${AIX_RELEASE}" ]]; then AIX_VFLAG="-D_AIX71 -D_AIX72"; fi
+if [[ "3" = "${AIX_RELEASE}" ]]; then AIX_VFLAG="-D_AIX71 -D_AIX72 -D_AIX73"; fi
+
+## IBM machines might not come with mkinstallp by default, if not, install it
+## note the bos.adt.other moves around when IBM revamps their free AIX servers
+if [[ -z $(command -v mkinstallp) ]]; then
+    if [[ -f "/repos/aix${AIX_VERSION}${AIX_RELEASE}/TL${AIX_TL_LEVEL}/BASE/installp/ppc/bos.adt.other" ]]; then
+        installp -ac -d "/repos/aix${AIX_VERSION}${AIX_RELEASE}/TL${AIX_TL_LEVEL}/BASE/installp/ppc/bos.adt.other" -F bos.adt.insttools
+    else
+        ## on AIX v7.2 TL5 it is exists in TL4 - wonder whats up with IBM
+        ## if  [[ "2" = "${AIX_RELEASE}" && -f "/repos/aix${AIX_VERSION}${AIX_RELEASE}/TL${AIX_TL_LEVEL}/BASE/installp/ppc/bos.adt.other" ]]; then
+        if  [[ "2" = "${AIX_RELEASE}" && -f "/repos/aix${AIX_VERSION}${AIX_RELEASE}/TL4/BASE/installp/ppc/bos.adt.other" ]]; then
+            ## installp -ac -d "/repos/aix${AIX_VERSION}${AIX_RELEASE}/TL${AIX_TL_LEVEL}/BASE/installp/ppc/bos.adt.other" -F bos.adt.insttools
+            installp -ac -d "/repos/aix${AIX_VERSION}${AIX_RELEASE}/TL4/BASE/installp/ppc/bos.adt.other" -F bos.adt.insttools
+        elif  [[ "3" = "${AIX_RELEASE}" && -f "/repos/aix${AIX_VERSION}${AIX_RELEASE}/TL${AIX_TL_LEVEL}/installp/ppc/bos.adt.other" ]]; then
+            installp -ac -d "/repos/aix${AIX_VERSION}${AIX_RELEASE}/TL${AIX_TL_LEVEL}/installp/ppc/bos.adt.other" -F bos.adt.insttools
+        else
+            echo "cannot find fileset /repos/aix${AIX_VERSION}${AIX_RELEASE}/TL${AIX_TL_LEVEL}/BASE/installp/ppc/bos.adt.other to install mkinstallp"
+            echo "check other TL levels to see if it exists"
+            exit 1
+        fi
+    fi
+fi
+
+export SALT_REL_INSTALLPATH="opt/saltstack/salt"
+export OBJECT_MODE=64
+## don't do this, it messes up picking __sync_synchronize
+## export CC=gcc
+## -mminimal-toc causing issues with cffi
+## export CFLAGS="-maix64 -g -mminimal-toc -DSYSV -D_AIX -D_AIX32 -D_AIX41 -D_AIX43 -D_AIX51 -D_AIX61 -D_AIX71 -D_ALL_SOURCE -DFUNCPROTO=15 -O2 -I/include -fthreadsafe-statics"a
+export CFLAGS="-maix64 -g -DSYSV -D_AIX -D_AIX32 -D_AIX41 -D_AIX43 -D_AIX51 -D_AIX61 ${AIX_VFLAG} -D_ALL_SOURCE -DFUNCPROTO=15 -O2 -I/include"
+## don't do this, it messes up picking __sync_synchronize
+## export CXX=g++
+export CXXFLAGS="${CFLAGS} -fthreadsafe-statics"
+export F77=g77
+export FFLAGS="-O -I/opt/freeware/include"
+export LD=ld
+export LDFLAGS="-L$freeware/lib -Wl,-blibpath:$freeware/lib:/usr/lib:/lib -Wl,-bmaxdata:0x80000000"
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+## python3 -m pip install --upgrade pip
+python3.9 -m pip --version
+
+python3.9 -m pip install setuptools
+python3.9 -m pip install freezegun
+python3.9 -m pip install pretend
+python3.9 -m pip install scripttest
+python3.9 -m pip install virtualenv
+python3.9 -m pip install "pop-config==8.0.2"
+
+export CICD_SALT_DATE=""
+CICD_SALT_DATE=$(date +"%a %b %0d %Y")
+
+# these really only needed if doing non-tag build
+## python3.9 -m pip install "${CICD_SALT_LOCATION}"
+## export CICD_SALT_VERSION=$(pip3 list --format=columns | grep salt | awk '{ print $2 }')
+
+rm -fR "${HOMEDIR_PREFIX}/dev_pyinstaller"
+mkdir -p "${HOMEDIR_PREFIX}/dev_pyinstaller"
+cd "${HOMEDIR_PREFIX}/dev_pyinstaller" || exit
+git clone -b "v${PYINSTALLER_VER}" https://github.com/pyinstaller/pyinstaller.git
+echo '#!/opt/freeware/bin/bash' > "${freeware}/bin/strip"
+echo "# dummy" >> "${freeware}/bin/strip"
+chmod 755 "${freeware}/bin/strip"
+cd pyinstaller/bootloader || exit
+python3.9 ./waf configure --no-lsb all --target-arch=64bit
+cd "${HOMEDIR_PREFIX}/dev_pyinstaller/pyinstaller" || exit
+export PYINSTALLER_DIR=""
+PYINSTALLER_DIR=$(pwd)
+python3.9 setup.py install
+
+cd "${oldpwd}" || exit
+python3.9 -m pip install "tiamat==7.10.7"
+## python3.9 -m pip install git+https://git@gitlab.com/saltstack/pop/tiamat@master#egg=tiamat
+
+if [[ ${HOME} = '/' ]]; then
+cp -f "${oldpwd}/gen_inst_template" "${HOME}"
+cp -f "${oldpwd}/install_salt.sh" "${HOME}"
+cp -f "${oldpwd}/salt_fqdns_grains.patch" "${HOME}"
+fi
+
+## need to patch Salt, checkout tag, hence 'v' prefix
+## Note attempts to use /opt/freeware/bin/patch ran out of memory, so using old AIX diff/patch methods
+ulimit -c unlimited
+ulimit -d unlimited
+ulimit -m unlimited
+ulimit -n unlimited
+ulimit -s unlimited
+ulimit -a
+cd ${HOME} || exit
+if [[ -z "${TAGGED_BUILD}" ]]; then
+    # nightly build
+    cd "${oldpwd}" || exit
+    rm -fR dev_salt
+    rm -fR "${HOMEDIR_PREFIX}/dev_salt"
+    mkdir dev_salt
+    cd dev_salt || exit
+    ## git clone -b v${CICD_SALT_VERSION} https://github.com/saltstack/salt.git
+    git clone https://github.com/saltstack/salt.git
+    mkdir -p "${HOMEDIR_PREFIX}/dev_salt/"
+    cp -R "${oldpwd}"/dev_salt/* "${HOMEDIR_PREFIX}/dev_salt/"
+    cd "${HOMEDIR_PREFIX}/dev_salt/salt" || exit
+    python3.9 setup.py sdist
+    cd dist || exit
+    ls -alh
+    export CICD_SALT_TAR_GZ_NAME=""
+    export CICD_SALT_LOCATION_NB=""
+    CICD_SALT_TAR_GZ_NAME=$(ls salt-*.tar.gz)
+    CICD_SALT_LOCATION_NB=$(pwd)/"${CICD_SALT_TAR_GZ_NAME}"
+else
+    rm -fR "${HOMEDIR_PREFIX}/dev_salt"
+    cp -R "${oldpwd}/dev_salt" "${HOMEDIR_PREFIX}/"
+    cd "${HOMEDIR_PREFIX}/dev_salt/salt/dist" || exit
+    ls -alh
+    export CICD_SALT_TAR_GZ_NAME=""
+    export CICD_SALT_LOCATION_NB=""
+    CICD_SALT_TAR_GZ_NAME=$(ls salt-${CICD_SALT_DIST_VERSION}*.tar.gz)
+    CICD_SALT_LOCATION_NB=$(pwd)/"${CICD_SALT_TAR_GZ_NAME}"
+fi
+cd "${HOMEDIR_PREFIX}/dev_salt/salt/dist" || exit
+ls -alh
+CICD_SALT_VERSION=$(find . -name "${CICD_SALT_TAR_GZ_NAME}" | sed s/salt-// | sed s/.tar.gz// | cut -d '/' -f 2)
+echo "$CICD_SALT_VERSION"
+echo "$CICD_SALT_RELEASE"
+echo "CI_PROJECT_DIR is ${CI_PROJECT_DIR}"
+echo "$CICD_SALT_LOCATION"
+cd "${oldpwd}" || exit
+
+cd "${HOME}" || exit
+rm -fR "${HOMEDIR_PREFIX}/aix_py3"
+mkdir "${HOMEDIR_PREFIX}/aix_py3"
+export DEVROOT="${HOMEDIR_PREFIX}/aix_py3"
+cp -R "${oldpwd}/requirements.txt" "${DEVROOT}/aix_requirements.txt"
+cp -R "${oldpwd}"/* "${DEVROOT}"
+
+cd "${DEVROOT}" || exit
+sed -i 's&PYINSTALLER_LOCATION&'"${PYINSTALLER_DIR}"'&' build.conf
+## sed -i -e 's&SALT_LOCATION&'salt==${CICD_SALT_VERSION}'&' aix_requirements.txt
+sed -i -e 's&SALT_LOCATION&'${HOMEDIR_PREFIX}/dev_salt/salt/dist/salt-"${CICD_SALT_VERSION}".tar.gz'&' aix_requirements.txt
+
+rm -fR dist
+rm -f "${HOMEDIR_PREFIX}/tiamat.log"
+rm -f "${HOMEDIR_PREFIX}/mybuild.log"
+## assume running as root
+tiamat --log-file "${HOMEDIR_PREFIX}/tiamat.log" --log-level TRACE build -c build.conf 2>&1 | tee "${HOMEDIR_PREFIX}/mybuild.log"
+
+if [[ ! -f "dist/run/run" ]]; then
+  echo "Failed to build tiamat, no dist/run/run" | tee  "${HOMEDIR_PREFIX}/mybuild.log"
+  exit 1
+fi
+
+{
+    echo "%_topdir ${freeware}/rpmbuild"
+    echo "%_var    ${freeware}/var"
+    echo "%_initddir ${freeware}/etc/rc.d/init.d"
+    echo "%_salt_date ${CICD_SALT_DATE}"
+    echo "%_salt_ver ${CICD_SALT_VERSION}"
+    echo "%_salt_release ${CICD_SALT_RELEASE}"
+} > "${HOMEDIR_PREFIX}/.rpmmacros"
+
+cat "${HOMEDIR_PREFIX}/.rpmmacros"
+rm -fR "${freeware}/rpmbuild"
+mkdir -p "${freeware}"/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+mkdir -p "${freeware}/var/tmp"
+cd "${DEVROOT}" || exit
+cp -R rpm_files/SPECS/* "${freeware}/rpmbuild/SPECS/"
+cp -R rpm_files/SOURCES/* "${freeware}/rpmbuild/SOURCES/"
+cp -R dist/run "${freeware}/rpmbuild/SOURCES/"
+find "${freeware}/rpmbuild/SOURCES/" -name "__pycache__" -exec rm -fR {} +
+find "${freeware}/rpmbuild/SOURCES/" -name "*.pyc" -exec rm -f {} +
+find "${freeware}/rpmbuild/SOURCES/" -name "*.pyo" -exec rm -f {} +
+
+## Have to set locale to non-UTF8 as having en_US.UTF8 causes issues with rpmbuild
+export LANG="en_US"
+export LC_ALL="en_US"
+
+#ensure any previously installed salt is removed
+yum -y erase salt-*
+
+cd /opt/freeware/rpmbuild || exit
+rpmbuild -v -ba "${freeware}/rpmbuild/SPECS/salt.spec"
+
+cd "${freeware}/rpmbuild/RPMS/ppc" || exit
+yum -y install "salt-${CICD_SALT_VERSION}-${CICD_SALT_RELEASE}.aix${AIX_VERSION}.${AIX_RELEASE}.ppc.rpm"
+
+cd "${HOME}" || exit
+rm -fR "${HOMEDIR_PREFIX}/prep_rte_area"
+mkdir -p "${HOMEDIR_PREFIX}/prep_rte_area/${SALT_REL_INSTALLPATH}"
+cp -R /"${SALT_REL_INSTALLPATH}"/* "${HOMEDIR_PREFIX}/prep_rte_area/${SALT_REL_INSTALLPATH}/"
+mkdir -p "${HOMEDIR_PREFIX}/prep_rte_area/usr/bin"
+mkdir -p "${HOMEDIR_PREFIX}/prep_rte_area/etc/rc.d/init.d"
+mkdir -p "${HOMEDIR_PREFIX}/prep_rte_area/${SALT_REL_INSTALLPATH}/etc/logrotate.d"
+mkdir -p "${HOMEDIR_PREFIX}/prep_rte_area/${SALT_REL_INSTALLPATH}/etc/salt"
+
+cp -R "${freeware}/bin/salt-call" "${HOMEDIR_PREFIX}/prep_rte_area/usr/bin/"
+cp -R "${freeware}/bin/salt-minion" "${HOMEDIR_PREFIX}/prep_rte_area/usr/bin/"
+cp -R "${freeware}/etc/logrotate.d/salt" "${HOMEDIR_PREFIX}/prep_rte_area/${SALT_REL_INSTALLPATH}/etc/logrotate.d/"
+cp -R "${freeware}/etc/salt" "${HOMEDIR_PREFIX}/prep_rte_area/${SALT_REL_INSTALLPATH}/etc/"
+cp -R "${freeware}/etc/rc.d/init.d/salt-minion" "${HOMEDIR_PREFIX}/prep_rte_area/etc/rc.d/init.d/"
+cp -R "${freeware}/etc/rc.d/init.d/salt-minion_src" "${HOMEDIR_PREFIX}/prep_rte_area/etc/rc.d/init.d/"
+## chown -R cecuser:cecuser "${HOMEDIR_PREFIX}"
+find "${HOMEDIR_PREFIX}/prep_rte_area" -name "__pycache__" -exec rm -fR {} +
+find "${HOMEDIR_PREFIX}/prep_rte_area" -name "*.pyc" -exec rm -f {} +
+find "${HOMEDIR_PREFIX}/prep_rte_area" -name "*.pyo" -exec rm -f {} +
+rm -f "${HOMEDIR_PREFIX}/prep_rte_area/${SALT_REL_INSTALLPATH}/run/setuptools/command/launcher manifest.xml"
+rm -f "${HOMEDIR_PREFIX}/prep_rte_area/${SALT_REL_INSTALLPATH}/run/setuptools/script (dev).tmpl"
+rm -fR "${HOMEDIR_PREFIX}/prep_rte_area/${SALT_REL_INSTALLPATH}/var/tmp"
+rm -f ./*.log
+
+cd "${HOME}" || exit
+sed -i 's&SALT_VERSION_STRING&'"${GEN_IBM_VER_STRING}"'&' "${HOMEDIR_PREFIX}/gen_inst_template"
+bash -x "${HOMEDIR_PREFIX}/gen_inst_template" 2>&1 | tee "${HOMEDIR_PREFIX}/mygen"
+rm -f "${HOMEDIR_PREFIX}/salt.template"
+mv "${HOMEDIR_PREFIX}/prep_rte_area/salt.template" "${HOMEDIR_PREFIX}/"
+mkinstallp -d "${HOMEDIR_PREFIX}/prep_rte_area" -T "${HOMEDIR_PREFIX}/salt.template" 2>&1 | tee "${HOMEDIR_PREFIX}/myinstlp"
+export salt_pkg="salt_${CICD_SALT_VERSION}"
+
+rm -fR "${salt_pkg}"
+rm -f "${salt_pkg}-${CICD_SALT_RELEASE}.tar"
+rm -f "${salt_pkg}-${CICD_SALT_RELEASE}.tar.gz"
+mkdir "${salt_pkg}"
+cp "${HOMEDIR_PREFIX}/install_salt.sh" "${HOMEDIR_PREFIX}/${salt_pkg}"
+cp "${HOMEDIR_PREFIX}"/prep_rte_area/tmp/salt*.bff "${HOMEDIR_PREFIX}/${salt_pkg}"
+tar -cvf ./"${salt_pkg}-${CICD_SALT_RELEASE}.tar" ./"${salt_pkg}"
+gzip ./"${salt_pkg}-${CICD_SALT_RELEASE}.tar"
+
+mv ./"${salt_pkg}-${CICD_SALT_RELEASE}.tar.gz" "${oldpwd}/"
+chown -R cecuser:cecuser "${oldpwd}"
+cd "${oldpwd}" || exit
