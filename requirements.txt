@@ -16,7 +16,7 @@ tomli
 cheroot==8.2.1 --install-option="--no-use-pep517"
 pyzmq==24.0.1 --install-option="--zmq=/opt/freeware/lib64"
 
-cryptography==3.1.1
+cryptography==39.0.1
 
 bcrypt==3.2.2   # later versions use Rust
 
